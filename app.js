@@ -8,7 +8,10 @@ let lastQuote = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
-    document.getElementById('marketSelect').addEventListener('change', onSymbolChange);
+    const marketSelectEl = document.getElementById('marketSelect');
+    if (marketSelectEl) {
+        marketSelectEl.addEventListener('change', onSymbolChange);
+    }
 });
 
 // 1. Connect to Public WebSocket Stream
@@ -17,16 +20,15 @@ function initWebSocket() {
 
     ws.onopen = () => {
         updateConnectionStatus(true, 'Connected (Public Feed)');
-        // Request active symbols with full details upon opening connection
-        ws.send(JSON.stringify({ active_symbols: 'full' }));
+        // Send active_symbols full request when connection opens
+        ws.send(JSON.stringify({ "active_symbols": "full" }));[span_6](start_span)[span_6](end_span)
     };
 
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data);[span_7](start_span)[span_7](end_span)
         handleMessage(data);
     };
 
-    // Auto-reconnect logic on close without calling ws.close() manually
     ws.onclose = () => {
         updateConnectionStatus(false, 'Disconnected (Reconnecting...)');
         setTimeout(initWebSocket, 3000);
@@ -38,18 +40,50 @@ function initWebSocket() {
     };
 }
 
-// 2. Process incoming websocket responses
+// 2. Process incoming websocket messages using correct fields
 function handleMessage(data) {
-    const msgType = data.msg_type;
+    // Handle active symbols list
+    if (data.active_symbols) {[span_8](start_span)[span_8](end_span)
+        populateAllMarketsDropdown(data.active_symbols);[span_9](start_span)[span_9](end_span)
+    }
 
-    if (msgType === 'active_symbols') {
-        populateAllMarketsDropdown(data.active_symbols);
-    } else if (msgType === 'tick') {
-        processTick(data.tick);
+    // Handle live ticks
+    if (data.tick) {[span_10](start_span)[span_10](end_span)
+        const priceElement = document.getElementById('livePrice');
+        const timeElement = document.getElementById('liveEpoch');
+
+        const rawQuote = data.tick.quote;[span_11](start_span)[span_11](end_span)
+        const epoch = data.tick.epoch;[span_12](start_span)[span_12](end_span)
+        const quote = parseFloat(rawQuote).toFixed(data.tick.pip_size || 4);
+
+        if (priceElement) {
+            priceElement.textContent = quote;[span_13](start_span)[span_13](end_span)
+        }
+        if (timeElement) {
+            timeElement.textContent = new Date(epoch * 1000).toLocaleString();[span_14](start_span)[span_14](end_span)
+        }
+
+        const currentNum = parseFloat(quote);
+        const prevNum = lastQuote !== null ? parseFloat(lastQuote) : null;
+
+        analyzeTickFeatures(currentNum, prevNum);
+        
+        const quoteString = currentNum.toString();
+        const lastChar = quoteString.slice(-1);
+        const digitNum = parseInt(lastChar, 10);
+        runAIBotAnalysis(currentNum, prevNum, digitNum);
+
+        lastQuote = quote;
+
+        tickHistory.push(currentNum);
+        if (tickHistory.length > 30) tickHistory.shift();
+
+        renderSVGChart();
+        appendTickTableRow(epoch, quote);
     }
 }
 
-// 3. Populate All Markets dynamic dropdown with option groups
+// 3. Populate dropdown using market.display_name and market.underlying_symbol
 function populateAllMarketsDropdown(symbols) {
     const select = document.getElementById('marketSelect');
     if (!select) return;
@@ -64,18 +98,24 @@ function populateAllMarketsDropdown(symbols) {
         'Stock & Basket Indices': []
     };
 
-    symbols.forEach(s => {
-        const marketName = s.market;
+    symbols.forEach(market => {[span_15](start_span)[span_15](end_span)
+        // Use market.display_name and market.underlying_symbol correctly
+        const displayName = market.display_name;[span_16](start_span)[span_16](end_span)
+        const underlyingSymbol = market.underlying_symbol;[span_17](start_span)[span_17](end_span)
+        const marketName = market.market;
+
+        if (!underlyingSymbol) return;
+
         if (marketName === 'synthetic_index') {
-            categories['Synthetic Indices'].push(s);
+            categories['Synthetic Indices'].push(market);
         } else if (marketName === 'forex') {
-            categories['Forex Currency Pairs'].push(s);
+            categories['Forex Currency Pairs'].push(market);
         } else if (marketName === 'commodities') {
-            categories['Commodities (Gold/Oil)'].push(s);
+            categories['Commodities (Gold/Oil)'].push(market);
         } else if (marketName === 'cryptocurrency') {
-            categories['Cryptocurrencies'].push(s);
+            categories['Cryptocurrencies'].push(market);
         } else {
-            categories['Stock & Basket Indices'].push(s);
+            categories['Stock & Basket Indices'].push(market);
         }
     });
 
@@ -84,10 +124,10 @@ function populateAllMarketsDropdown(symbols) {
             const group = document.createElement('optgroup');
             group.label = `--- ${catName.toUpperCase()} ---`;
 
-            categories[catName].forEach(symbol => {
+            categories[catName].forEach(market => {[span_18](start_span)[span_18](end_span)
                 const option = document.createElement('option');
-                option.value = symbol.symbol;
-                option.innerText = `${symbol.display_name} (${symbol.symbol})`;
+                option.value = market.underlying_symbol;[span_19](start_span)[span_19](end_span)
+                option.innerText = `${market.display_name} (${market.underlying_symbol})`;[span_20](start_span)[span_20](end_span)
                 group.appendChild(option);
             });
 
@@ -95,9 +135,9 @@ function populateAllMarketsDropdown(symbols) {
         }
     });
 
-    // Auto-select and subscribe to the first active symbol dynamically if not set
+    // Auto-select and subscribe to the first active underlying symbol if not set
     if (symbols.length > 0 && !currentSymbol) {
-        currentSymbol = symbols[0].symbol;
+        currentSymbol = symbols[0].underlying_symbol;[span_21](start_span)[span_21](end_span)
         select.value = currentSymbol;
         subscribeToSymbolTicks(currentSymbol);
     }
@@ -105,12 +145,15 @@ function populateAllMarketsDropdown(symbols) {
 
 // 4. Change symbol subscription dynamically
 function onSymbolChange() {
-    currentSymbol = document.getElementById('marketSelect').value;
-    subscribeToSymbolTicks(currentSymbol);
+    const select = document.getElementById('marketSelect');
+    if (select) {
+        currentSymbol = select.value;
+        subscribeToSymbolTicks(currentSymbol);
+    }
 }
 
 function subscribeToSymbolTicks(symbol) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN && symbol) {
         ws.send(JSON.stringify({ forget_all: 'ticks' }));
         tickHistory = [];
         lastQuote = null;
@@ -123,40 +166,7 @@ function subscribeToSymbolTicks(symbol) {
     }
 }
 
-// 5. Read tick data dynamically using tick.quote and tick.epoch
-function processTick(tick) {
-    if (!tick) return;
-
-    const rawQuote = tick.quote;
-    const epoch = tick.epoch;
-
-    const quote = parseFloat(rawQuote).toFixed(tick.pip_size || 4);
-
-    const livePriceEl = document.getElementById('livePrice');
-    const liveEpochEl = document.getElementById('liveEpoch');
-    if (livePriceEl) livePriceEl.innerText = quote;
-    if (liveEpochEl) liveEpochEl.innerText = epoch;
-
-    const currentNum = parseFloat(quote);
-    const prevNum = lastQuote !== null ? parseFloat(lastQuote) : null;
-
-    analyzeTickFeatures(currentNum, prevNum);
-    
-    const quoteString = currentNum.toString();
-    const lastChar = quoteString.slice(-1);
-    const digitNum = parseInt(lastChar, 10);
-    runAIBotAnalysis(currentNum, prevNum, digitNum);
-
-    lastQuote = quote;
-
-    tickHistory.push(currentNum);
-    if (tickHistory.length > 30) tickHistory.shift();
-
-    renderSVGChart();
-    appendTickTableRow(epoch, quote);
-}
-
-// 6. Rise/Fall and Digit Analysis logic
+// 5. Rise/Fall and Digit Analysis logic
 function analyzeTickFeatures(currentQuote, previousQuote) {
     const directionBox = document.getElementById('tickDirectionBox');
     const digitValueEl = document.getElementById('lastDigitValue');
@@ -187,7 +197,7 @@ function analyzeTickFeatures(currentQuote, previousQuote) {
     }
 }
 
-// 7. AI Bot Analysis Engine
+// 6. AI Bot Analysis Engine
 function runAIBotAnalysis(currentQuote, previousQuote, lastDigit) {
     if (previousQuote === null) return;
 
@@ -223,7 +233,7 @@ function runAIBotAnalysis(currentQuote, previousQuote, lastDigit) {
     if (botConfidenceEl) botConfidenceEl.innerText = confidence;
 }
 
-// 8. SVG Chart Rendering
+// 7. SVG Chart Rendering
 function renderSVGChart() {
     if (tickHistory.length < 2) return;
     const svg = document.getElementById('tickChart');
@@ -246,7 +256,7 @@ function renderSVGChart() {
     path.setAttribute('d', `M ${points.join(' L ')}`);
 }
 
-// 9. Add Row to Table
+// 8. Add Row to Table
 function appendTickTableRow(epoch, quote) {
     const tbody = document.getElementById('tickTableBody');
     if (!tbody) return;
@@ -263,7 +273,7 @@ function appendTickTableRow(epoch, quote) {
     }
 }
 
-// 10. Update Connection Status Badge
+// 9. Update Connection Status Badge
 function updateConnectionStatus(isConnected, text) {
     const badge = document.getElementById('connectionStatus');
     if (!badge) return;
@@ -274,3 +284,10 @@ function updateConnectionStatus(isConnected, text) {
         badge.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span><span class="text-rose-400 font-mono font-semibold">${text}</span>`;
     }
 }
+
+
+
+    
+            
+
+    
